@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import '../../../services/api_service.dart';
+import '../../../widgets/custom_snackbar.dart';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
@@ -13,14 +15,42 @@ class _EditProfilePageState extends State<EditProfilePage> {
   File? _image;
   final picker = ImagePicker();
 
-  final TextEditingController nameC = TextEditingController(text: "John Doe");
-  final TextEditingController emailC = TextEditingController(
-    text: "johndoe@email.com",
-  );
-  final TextEditingController phoneC = TextEditingController(
-    text: "089123456789",
-  );
-  final TextEditingController addressC = TextEditingController(text: "Jakarta");
+  final TextEditingController nameC = TextEditingController();
+  final TextEditingController emailC = TextEditingController();
+  final TextEditingController phoneC = TextEditingController();
+  final TextEditingController addressC = TextEditingController();
+
+  bool isLoading = true;
+  bool isSaving = false;
+  String? currentPhotoUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    setState(() => isLoading = true);
+
+    try {
+      final response = await ApiService.getProfile();
+      if (response['success'] == true) {
+        final user = response['user'];
+        setState(() {
+          nameC.text = user['name'] ?? '';
+          emailC.text = user['email'] ?? '';
+          phoneC.text = user['phone'] ?? '';
+          addressC.text = user['address'] ?? '';
+          currentPhotoUrl = user['photo'];
+        });
+      }
+    } catch (e) {
+      print('Error loading profile: $e');
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
 
   Future<void> _pickImage() async {
     final picked = await picker.pickImage(source: ImageSource.gallery);
@@ -29,8 +59,68 @@ class _EditProfilePageState extends State<EditProfilePage> {
     }
   }
 
+  Future<void> _saveProfile() async {
+    if (nameC.text.isEmpty || phoneC.text.isEmpty || addressC.text.isEmpty) {
+      CustomSnackbar.show(
+        context,
+        message: 'Semua kolom wajib diisi!',
+        backgroundColor: Colors.red,
+      );
+      return;
+    }
+
+    setState(() => isSaving = true);
+
+    try {
+      print('Uploading with name: ${nameC.text}'); // ✅ Debug
+      print('Photo selected: ${_image?.path ?? "no photo"}'); // ✅ Debug
+
+      final response = await ApiService.updateProfile(
+        name: nameC.text,
+        phone: phoneC.text,
+        address: addressC.text,
+        photo: _image,
+      );
+
+      print('Update response: $response'); // ✅ Debug
+
+      if (response['success'] == true) {
+        if (mounted) {
+          CustomSnackbar.show(
+            context,
+            message: 'Profile berhasil diupdate!',
+            backgroundColor: Colors.green,
+          );
+
+          // ✅ Delay sedikit sebelum pop biar user lihat snackbar
+          await Future.delayed(const Duration(milliseconds: 500));
+          Navigator.pop(context, true); // ✅ Return true untuk trigger refresh
+        }
+      } else {
+        throw response['message'] ?? 'Gagal update profile';
+      }
+    } catch (e) {
+      print('Error updating profile: $e'); // ✅ Debug
+      if (mounted) {
+        CustomSnackbar.show(
+          context,
+          message: 'Error: $e',
+          backgroundColor: Colors.red,
+        );
+      }
+    } finally {
+      setState(() => isSaving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFEFECE3),
       appBar: AppBar(
@@ -62,8 +152,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   radius: 55,
                   backgroundImage: _image != null
                       ? FileImage(_image!)
-                      : const AssetImage("assets/images/user.jpg")
-                            as ImageProvider,
+                      : currentPhotoUrl != null
+                          ? NetworkImage(
+                              'http://192.168.18.37:8000/storage/$currentPhotoUrl')
+                          : const AssetImage("assets/images/user.jpg")
+                              as ImageProvider,
                 ),
                 Positioned(
                   bottom: 0,
@@ -72,8 +165,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     onTap: _pickImage,
                     child: Container(
                       padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF4A70A9),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF4A70A9),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
@@ -94,6 +187,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
           _buildField(
             label: "Email",
             controller: emailC,
+            enabled: false, // Email tidak bisa diubah
             keyboard: TextInputType.emailAddress,
           ),
           _buildField(
@@ -110,12 +204,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
   }
 
-  // INPUT FIELD
   Widget _buildField({
     required String label,
     required TextEditingController controller,
     TextInputType keyboard = TextInputType.text,
     int maxLines = 1,
+    bool enabled = true,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -131,9 +225,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
             controller: controller,
             keyboardType: keyboard,
             maxLines: maxLines,
+            enabled: enabled,
             decoration: InputDecoration(
               filled: true,
-              fillColor: Colors.white,
+              fillColor: enabled ? Colors.white : Colors.grey[200],
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 14,
                 vertical: 12,
@@ -149,7 +244,6 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
   }
 
-  // BUTTON SIMPAN
   Widget _saveBtn(BuildContext context) {
     return ElevatedButton(
       style: ElevatedButton.styleFrom(
@@ -157,14 +251,20 @@ class _EditProfilePageState extends State<EditProfilePage> {
         padding: const EdgeInsets.symmetric(vertical: 16),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-      onPressed: () {
-        // TODO: save to backend
-        Navigator.pop(context);
-      },
-      child: const Text(
-        "Simpan",
-        style: TextStyle(color: Colors.white, fontSize: 16),
-      ),
+      onPressed: isSaving ? null : _saveProfile,
+      child: isSaving
+          ? const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(Colors.white),
+              ),
+            )
+          : const Text(
+              "Simpan",
+              style: TextStyle(color: Colors.white, fontSize: 16),
+            ),
     );
   }
 }

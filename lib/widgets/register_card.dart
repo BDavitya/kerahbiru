@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
 import '../widgets/custom_snackbar.dart';
+import '../services/api_service.dart';
+import '../utils/encryption_helper.dart';
+import '../utils/session_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../views/shake_verification_page.dart';
 
 class RegisterCard extends StatefulWidget {
   final VoidCallback onSwitch;
@@ -16,8 +21,9 @@ class _RegisterCardState extends State<RegisterCard> {
   final confirmPasswordController = TextEditingController();
   bool showPassword1 = false;
   bool showPassword2 = false;
+  bool isLoading = false;
 
-  void _validateAndRegister() {
+  Future<void> _validateAndRegister() async {
     if (emailController.text.isEmpty ||
         usernameController.text.isEmpty ||
         passwordController.text.isEmpty ||
@@ -48,12 +54,55 @@ class _RegisterCardState extends State<RegisterCard> {
       return;
     }
 
-    CustomSnackbar.show(
-      context,
-      message: 'Registrasi berhasil!',
-      backgroundColor: Colors.green,
-    );
-    widget.onSwitch();
+    setState(() => isLoading = true);
+
+    try {
+      final encryptedPassword = EncryptionHelper.encryptPassword(
+        passwordController.text,
+      );
+
+      final response = await ApiService.register(
+        name: usernameController.text,
+        email: emailController.text,
+        password: encryptedPassword,
+      );
+
+      if (response['success'] == true) {
+        if (mounted) {
+          // Simpan token dan user ID
+          await SessionManager.saveLoginTime();
+          if (response['user'] != null && response['user']['id'] != null) {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt('user_id', response['user']['id']);
+            await prefs.setString('auth_token', response['token']);
+          }
+
+          CustomSnackbar.show(
+            context,
+            message: 'Registrasi berhasil! Lakukan verifikasi keamanan.',
+            backgroundColor: Colors.green,
+          );
+
+          // Redirect ke shake verification
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const ShakeVerificationPage()),
+          );
+        }
+      } else {
+        throw response['message'] ?? 'Registrasi gagal';
+      }
+    } catch (e) {
+      if (mounted) {
+        CustomSnackbar.show(
+          context,
+          message: 'Error: $e',
+          backgroundColor: Colors.red,
+        );
+      }
+    } finally {
+      setState(() => isLoading = false);
+    }
   }
 
   @override
@@ -205,15 +254,24 @@ class _RegisterCardState extends State<RegisterCard> {
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              onPressed: _validateAndRegister,
-              child: const Text(
-                "Daftar",
-                style: TextStyle(
-                  fontFamily: 'Poppins',
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
+              onPressed: isLoading ? null : _validateAndRegister,
+              child: isLoading
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(Colors.white),
+                      ),
+                    )
+                  : const Text(
+                      "Daftar",
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
             ),
           ),
           const SizedBox(height: 18),

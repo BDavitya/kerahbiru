@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import '../utils/session_checker.dart'; // ✅ Import
 import 'pages/beranda_page.dart';
 import 'pages/favorit_page.dart';
 import 'pages/riwayat_page.dart';
 import 'pages/profil_page.dart';
 
 class HomePage extends StatefulWidget {
-  final int initialIndex; // 🟢 tambahkan parameter ini
+  final int initialIndex;
 
   const HomePage({super.key, this.initialIndex = 0});
 
@@ -27,13 +28,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.initialIndex; // 🟢 ambil dari parameter
+    _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: _currentIndex);
+
+    // ✅ Start session checker
+    SessionChecker.startChecking(context);
   }
 
   @override
   void dispose() {
     _pageController.dispose();
+    SessionChecker.stopChecking(); // ✅ Stop when disposed
     super.dispose();
   }
 

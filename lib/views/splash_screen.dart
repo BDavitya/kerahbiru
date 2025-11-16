@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'auth_page.dart';
+import 'home_page.dart';
+import '../utils/session_manager.dart';
+import 'complete_profil_page.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -28,7 +31,41 @@ class _SplashScreenState extends State<SplashScreen>
 
     _controller.forward();
 
-    Future.delayed(const Duration(seconds: 3), () {
+    // Cek session setelah splash
+    _checkSession();
+  }
+
+  Future<void> _checkSession() async {
+    await Future.delayed(const Duration(seconds: 3));
+
+    // Cek apakah sesi masih valid
+    final isValid = await SessionManager.isSessionValid();
+
+    if (!mounted) return;
+
+    if (isValid) {
+      // Session valid, cek apakah profile sudah lengkap
+      final isComplete = await SessionManager.isProfileComplete();
+
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 600),
+          pageBuilder: (_, __, ___) =>
+              isComplete ? const HomePage() : const CompleteProfilePage(),
+          transitionsBuilder: (_, animation, __, child) {
+            return FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeInOut,
+              ),
+              child: child,
+            );
+          },
+        ),
+      );
+    } else {
+      // Session tidak valid, tampilkan pesan
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
@@ -45,7 +82,19 @@ class _SplashScreenState extends State<SplashScreen>
           },
         ),
       );
-    });
+
+      // Tampilkan snackbar jika session expired
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Sesi telah habis, silakan login kembali'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      });
+    }
   }
 
   @override

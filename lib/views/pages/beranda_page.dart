@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../services/api_service.dart';
+import '../../utils/favorite_database.dart';
+import '../../utils/currency_helper.dart';
+import '../../utils/user_preferences.dart';
 import 'detail/worker_detail_page.dart';
 
 class BerandaPage extends StatefulWidget {
@@ -9,144 +13,117 @@ class BerandaPage extends StatefulWidget {
   State<BerandaPage> createState() => _BerandaPageState();
 }
 
-class _BerandaPageState extends State<BerandaPage>
-    with SingleTickerProviderStateMixin {
+class _BerandaPageState extends State<BerandaPage> {
+  // Controllers & State
   final TextEditingController _searchController = TextEditingController();
   String searchQuery = "";
   String selectedFilter = "Semua";
+  String currentCurrency = 'IDR';
   bool isLoading = false;
+  bool isLoadingProfile = true;
+  List<Map<String, dynamic>> workers = [];
+  String userName = "";
 
-  // 💡 Gunakan final untuk data statis
-  final List<Map<String, dynamic>> workers = [
-    {
-      "nama": "Budi Santoso",
-      "pekerjaan": "Tukang Bangunan",
-      "rating": 4.8,
-      "jarak": 3.2,
-      "harga": 75000,
-      "gender": "Laki-Laki",
-      "foto": "assets/images/Worker1.png",
-      "favorite": false,
-      "order": 120, // 🛠️ DITAMBAHKAN: Field 'order' yang hilang
-    },
-    {
-      "nama": "Rina Putri",
-      "pekerjaan": "Tukang Listrik",
-      "rating": 4.6,
-      "jarak": 7.5,
-      "harga": 90000,
-      "gender": "Perempuan",
-      "foto": "assets/images/Worker2.png",
-      "favorite": false,
-      "order": 95, // 🛠️ DITAMBAHKAN: Field 'order' yang hilang
-    },
-    {
-      "nama": "Andi Wijaya",
-      "pekerjaan": "Tukang Las",
-      "rating": 4.9,
-      "jarak": 4.1,
-      "harga": 110000,
-      "gender": "Laki-Laki",
-      "foto": "assets/images/Worker3.png",
-      "favorite": false,
-      "order": 150, // 🛠️ DITAMBAHKAN: Field 'order' yang hilang
-    },
-    {
-      "nama": "Siti Aulia",
-      "pekerjaan": "Asisten Rumah Tangga",
-      "rating": 4.7,
-      "jarak": 2.8,
-      "harga": 60000,
-      "gender": "Perempuan",
-      "foto": "assets/images/Worker4.png",
-      "favorite": false,
-      "order": 200, // 🛠️ DITAMBAHKAN: Field 'order' yang hilang
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _initializeData();
+  }
 
-  // 💡 Perbaikan: Logika favorit yang diperbarui
-  void _toggleFavorite(int workerIndex) {
-    // Cari index pekerja di list workers asli menggunakan data di filteredWorkers
-    // 💡 Menggunakan hasil filter saat ini, bukan index dari list 'workers' asli.
-    final currentWorker = filteredWorkers[workerIndex];
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
-    final originalIndex = workers.indexWhere(
-      (worker) => worker["nama"] == currentWorker["nama"],
-    );
+  // ==================== INITIALIZATION ====================
 
-    if (originalIndex != -1) {
-      final worker = workers[originalIndex];
-      final isFavorite = worker["favorite"] as bool;
-      setState(() {
-        // Memperbarui list pekerja asli
-        workers[originalIndex]["favorite"] = !isFavorite;
+  Future<void> _initializeData() async {
+    await Future.wait([
+      _loadCurrency(),
+      _loadProfile(),
+      _loadWorkers(),
+    ]);
+  }
 
-        // Memastikan filteredWorkers diperbarui secara otomatis melalui getter
-        // tidak perlu diubah secara eksplisit di sini.
-      });
+  Future<void> _loadCurrency() async {
+    final currency = await UserPreferences.getCurrency();
+    if (mounted) {
+      setState(() => currentCurrency = currency);
+    }
+  }
 
-      if (!isFavorite) {
-        CustomSnackbar.show(
-          context,
-          message: 'Berhasil menambahkan ${worker["nama"]} ke favorit!',
-          backgroundColor: Colors.green,
-        );
-      } else {
-        CustomSnackbar.show(
-          context,
-          message: "Menghapus ${worker["nama"]} dari favorit.",
-          backgroundColor: Colors.red,
-        );
+  Future<void> _loadProfile() async {
+    setState(() => isLoadingProfile = true);
+
+    try {
+      final response = await ApiService.getProfile();
+      if (response['success'] == true) {
+        setState(() {
+          userName = response['user']['name'] ?? 'User';
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading profile: $e');
+    } finally {
+      if (mounted) {
+        setState(() => isLoadingProfile = false);
       }
     }
   }
 
-  List<Map<String, dynamic>> get filteredWorkers {
-    // Salin list agar tidak mengubah data asli, tapi menggunakan list asli
-    List<Map<String, dynamic>> results = List.from(workers);
+  Future<void> _loadWorkers() async {
+    setState(() => isLoading = true);
 
-    // Filter pencarian
-    if (searchQuery.isNotEmpty) {
-      final q = searchQuery.toLowerCase();
-      results = results.where((worker) {
-        return (worker["nama"] as String).toLowerCase().contains(q) ||
-            (worker["pekerjaan"] as String).toLowerCase().contains(q);
-      }).toList();
+    try {
+      String? sortBy;
+      String? gender;
+
+      // Determine filter parameters
+      if (selectedFilter == "Terdekat" ||
+          selectedFilter == "Termurah" ||
+          selectedFilter == "Terpercaya") {
+        sortBy = selectedFilter;
+      } else if (selectedFilter == "Perempuan" ||
+          selectedFilter == "Laki-Laki") {
+        gender = selectedFilter;
+      }
+
+      final response = await ApiService.getWorkers(
+        search: searchQuery.isEmpty ? null : searchQuery,
+        gender: gender,
+        sortBy: sortBy,
+      );
+
+      if (response['success'] == true) {
+        setState(() {
+          workers = List<Map<String, dynamic>>.from(response['workers']);
+        });
+      } else {
+        _showError(response['message'] ?? 'Gagal memuat data');
+      }
+    } catch (e) {
+      debugPrint('Error loading workers: $e');
+      _showError('Terjadi kesalahan saat memuat data');
+    } finally {
+      if (mounted) {
+        setState(() => isLoading = false);
+      }
     }
-
-    // Filter kategori
-    switch (selectedFilter) {
-      case "Perempuan":
-        results = results.where((w) => w["gender"] == "Perempuan").toList();
-        break;
-      case "Laki-Laki":
-        results = results.where((w) => w["gender"] == "Laki-Laki").toList();
-        break;
-      case "Termurah":
-        // Pastikan tipe data benar sebelum membandingkan
-        results.sort(
-          (a, b) => (a["harga"] as num).compareTo(b["harga"] as num),
-        );
-        break;
-      case "Terdekat":
-        results.sort(
-          (a, b) => (a["jarak"] as num).compareTo(b["jarak"] as num),
-        );
-        break;
-      case "Terpercaya":
-        results.sort(
-          (a, b) => (b["rating"] as num).compareTo(a["rating"] as num),
-        );
-        break;
-      default:
-        break; // “Semua” tidak filter apa pun
-    }
-
-    return results;
   }
 
-  void changeFilter(String filter) async {
-    // Jika filter yang dipilih sama, tidak perlu memuat ulang
+  // ==================== ACTIONS ====================
+
+  Future<void> _onSearchChanged(String value) async {
+    setState(() => searchQuery = value);
+    // Debounce search for better performance
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (searchQuery == value) {
+      _loadWorkers();
+    }
+  }
+
+  Future<void> _changeFilter(String filter) async {
     if (selectedFilter == filter) return;
 
     setState(() {
@@ -154,86 +131,102 @@ class _BerandaPageState extends State<BerandaPage>
       isLoading = true;
     });
 
-    // simulasi loading biar ada efek transisi smooth
-    await Future.delayed(const Duration(milliseconds: 450));
-
-    setState(() {
-      isLoading = false;
-    });
+    await _loadWorkers();
   }
 
-  // 💡 Fungsi untuk memformat harga
-  String _formatCurrency(int amount) {
-    // Contoh sederhana: Menambahkan "Rp" dan memformat ribuan (perlu package intl untuk format yang lebih baik)
-    final String formatted = amount.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]}.',
-    );
-    return 'Rp$formatted';
+  Future<void> _toggleFavorite(int index) async {
+    final worker = workers[index];
+    final workerId = worker['id'];
+    final userId = await UserPreferences.getUserId();
+
+    if (userId == null) {
+      _showError('User ID tidak ditemukan');
+      return;
+    }
+
+    try {
+      final isFav = await FavoriteDatabase.isFavorite(workerId, userId);
+
+      if (isFav) {
+        await FavoriteDatabase.removeFavorite(workerId, userId);
+        _showSuccess("Menghapus ${worker["name"]} dari favorit.",
+            isError: true);
+      } else {
+        await FavoriteDatabase.addFavorite(worker, userId);
+        _showSuccess('Berhasil menambahkan ${worker["name"]} ke favorit!');
+      }
+
+      setState(() {});
+    } catch (e) {
+      debugPrint('Error toggling favorite: $e');
+      _showError('Gagal mengupdate favorit');
+    }
   }
+  // ==================== HELPERS ====================
+
+  String _formatCurrency(dynamic amount) {
+    return CurrencyHelper.convertAndFormat(amount, currentCurrency);
+  }
+
+  double _parseRating(dynamic rating) {
+    return rating != null ? double.tryParse(rating.toString()) ?? 0.0 : 0.0;
+  }
+
+  void _showSuccess(String message, {bool isError = false}) {
+    if (mounted) {
+      CustomSnackbar.show(
+        context,
+        message: message,
+        backgroundColor: isError ? Colors.red : Colors.green,
+      );
+    }
+  }
+
+  void _showError(String message) {
+    if (mounted) {
+      CustomSnackbar.show(
+        context,
+        message: message,
+        backgroundColor: Colors.red,
+      );
+    }
+  }
+
+  // ==================== UI BUILD ====================
 
   @override
   Widget build(BuildContext context) {
-    final workersToDisplay = filteredWorkers; // Ambil hasilnya sekali saja
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 2,
         title: _buildSearchBar(),
-        automaticallyImplyLeading: false, // hilangkan tombol back default
+        automaticallyImplyLeading: false,
       ),
-
       backgroundColor: const Color(0xFFEFECE3),
       body: SafeArea(
         child: Column(
           children: [
-            // Sapaan user
             _buildGreeting(),
-
-            // Submenu filter kategori
             _buildFilterChips(),
-
             const SizedBox(height: 10),
-
-            // Daftar pekerja
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: GridView.builder(
-                  itemCount: workersToDisplay
-                      .length, // 💡 Menggunakan workersToDisplay
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisExtent: 260,
-                    crossAxisSpacing: 14,
-                    mainAxisSpacing: 14,
-                  ),
-                  itemBuilder: (context, index) {
-                    final worker = workersToDisplay[index];
-                    return _buildWorkerCard(
-                      worker,
-                      index,
-                    ); // 🛠️ Menggunakan widget yang diekstrak dan diperbaiki
-                  },
-                ),
-              ),
-            ),
-            const SizedBox(height: 16), // Padding bawah
+            Expanded(child: _buildWorkerGrid()),
+            const SizedBox(height: 16),
           ],
         ),
       ),
     );
   }
 
-  // 💡 Ekstraksi Widget: Search Bar (Tidak diubah)
+  // ==================== UI COMPONENTS ====================
+
   Widget _buildSearchBar() {
     return TextField(
       controller: _searchController,
-      onChanged: (val) => setState(() => searchQuery = val),
+      onChanged: _onSearchChanged,
       decoration: InputDecoration(
         hintText: "Cari pekerja...",
-        hintStyle: const TextStyle(fontFamily: "Poppins"),
+        hintStyle: const TextStyle(fontFamily: "Poppins", fontSize: 14),
         prefixIcon: const Icon(Icons.search, color: Color(0xFF4A70A9)),
         filled: true,
         fillColor: const Color(0xFFF7F7F7),
@@ -246,54 +239,75 @@ class _BerandaPageState extends State<BerandaPage>
     );
   }
 
-  // 💡 Ekstraksi Widget: Greeting (Tidak diubah)
   Widget _buildGreeting() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
       child: Align(
         alignment: Alignment.centerLeft,
-        child: Text(
-          "Selanat Datang, Bar!", // Ganti dengan nama user yang sebenarnya
-          style: TextStyle(
-            fontFamily: "Poppins",
-            fontWeight: FontWeight.w600,
-            fontSize: 18,
-            color: Colors.black87,
-          ),
-        ),
+        child: isLoadingProfile
+            ? const Row(
+                children: [
+                  Text(
+                    "Selamat Datang, ",
+                    style: TextStyle(
+                      fontFamily: "Poppins",
+                      fontWeight: FontWeight.w600,
+                      fontSize: 18,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
+              )
+            : Text(
+                "Selamat Datang, $userName!",
+                style: const TextStyle(
+                  fontFamily: "Poppins",
+                  fontWeight: FontWeight.w600,
+                  fontSize: 18,
+                  color: Colors.black87,
+                ),
+              ),
       ),
     );
   }
 
-  // 💡 Ekstraksi Widget: Filter Chips (Tidak diubah)
   Widget _buildFilterChips() {
+    final filters = [
+      ("Semua", Icons.grid_view_rounded),
+      ("Perempuan", Icons.woman_rounded),
+      ("Laki-Laki", Icons.man_rounded),
+      ("Termurah", Icons.attach_money_rounded),
+      ("Terdekat", Icons.location_on_rounded),
+      ("Terpercaya", Icons.star_rounded),
+    ];
+
     return SizedBox(
       height: 42,
-      child: ListView(
+      child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.only(left: 16),
-        children: [
-          _buildFilterChip("Semua", Icons.grid_view_rounded),
-          _buildFilterChip("Perempuan", Icons.woman_rounded),
-          _buildFilterChip("Laki-Laki", Icons.man_rounded),
-          _buildFilterChip("Termurah", Icons.attach_money_rounded),
-          _buildFilterChip("Terdekat", Icons.location_on_rounded),
-          _buildFilterChip("Terpercaya", Icons.star_rounded),
-          const SizedBox(width: 10),
-        ],
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: filters.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final (label, icon) = filters[index];
+          return _buildFilterChip(label, icon);
+        },
       ),
     );
   }
 
-  // 💡 Ekstraksi Widget: Single Filter Chip (Tidak diubah)
   Widget _buildFilterChip(String label, IconData icon) {
     final bool isSelected = selectedFilter == label;
 
     return GestureDetector(
-      onTap: () => changeFilter(label),
+      onTap: () => _changeFilter(label),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.only(right: 10),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: isSelected ? const Color(0xFF4A70A9) : Colors.white,
@@ -314,6 +328,7 @@ class _BerandaPageState extends State<BerandaPage>
               : [],
         ),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               icon,
@@ -336,171 +351,299 @@ class _BerandaPageState extends State<BerandaPage>
     );
   }
 
-  // 💡 Ekstraksi Widget: Worker Card (DIPERBAIKI)
-  Widget _buildWorkerCard(Map<String, dynamic> worker, int index) {
-    // 🛠️ PERBAIKAN: Format harga di sini.
-    final formattedHarga = _formatCurrency(worker["harga"] as int);
-    final isTopRated = worker["rating"] >= 4.8;
-
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => WorkerDetailPage(worker: worker)),
-        );
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 6,
-              offset: const Offset(0, 4),
-            ),
-          ],
+  Widget _buildWorkerGrid() {
+    if (isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(
+          color: Color(0xFF4A70A9),
         ),
-        child: Stack(
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(18),
-                    topRight: Radius.circular(18),
-                  ),
-                  child: Image.asset(
-                    worker["foto"],
-                    height: 130,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              worker["nama"],
-                              style: const TextStyle(
-                                fontFamily: "Poppins",
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (isTopRated)
-                            const Icon(
-                              Icons.verified_rounded,
-                              color: Color(0xFF4A70A9),
-                              size: 18,
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        worker["pekerjaan"],
-                        style: const TextStyle(
-                          fontFamily: "Poppins",
-                          fontSize: 12,
-                          color: Colors.black54,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.star_rounded,
-                            color: Colors.amber,
-                            size: 16,
-                          ),
-                          const SizedBox(width: 2),
-                          // 🛠️ PERBAIKAN: Memastikan worker["rating"] dipanggil dengan benar
-                          Text(
-                            "${worker["rating"]} | ${worker["order"]}x", // 💡 Menggunakan field 'order' yang sudah ditambahkan
-                            style: const TextStyle(
-                              fontFamily: "Poppins",
-                              fontSize: 12,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          const Icon(
-                            Icons.location_on,
-                            color: Color(0xFF8FABD4),
-                            size: 16,
-                          ),
-                          Text(
-                            // 🛠️ PERBAIKAN: Memastikan worker["jarak"] dipanggil dengan benar
-                            "${worker["jarak"]} km",
-                            style: const TextStyle(
-                              fontFamily: "Poppins",
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        "$formattedHarga/jam", // Menggunakan format yang diperbaiki
-                        style: const TextStyle(
-                          fontFamily: "Poppins",
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF4A70A9),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+      );
+    }
 
-            // Favorite button
-            Positioned(
-              bottom: 10,
-              right: 10,
-              // 🛠️ Menggunakan index dari filteredWorkers
-              child: GestureDetector(
-                onTap: () => _toggleFavorite(index),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Icon(
-                    worker["favorite"]
-                            as bool // Pastikan casting ke bool
-                        ? Icons.favorite
-                        : Icons.favorite_border,
-                    color: worker["favorite"] as bool
-                        ? Colors.red
-                        : const Color(0xFF4A70A9),
-                    size: 20,
-                  ),
-                ),
+    if (workers.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.person_search,
+              size: 64,
+              color: Colors.grey[400],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              searchQuery.isNotEmpty
+                  ? 'Tidak ada pekerja ditemukan\nuntuk "$searchQuery"'
+                  : 'Tidak ada pekerja tersedia',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: "Poppins",
+                fontSize: 14,
+                color: Colors.grey[600],
               ),
             ),
           ],
         ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadWorkers,
+      color: const Color(0xFF4A70A9),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: GridView.builder(
+          physics: const AlwaysScrollableScrollPhysics(),
+          itemCount: workers.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisExtent: 260,
+            crossAxisSpacing: 14,
+            mainAxisSpacing: 14,
+          ),
+          itemBuilder: (context, index) {
+            return _buildWorkerCard(workers[index], index);
+          },
+        ),
       ),
     );
+  }
+
+  Widget _buildWorkerCard(Map<String, dynamic> worker, int index) {
+    // Debug print untuk cek data
+    debugPrint(
+        'Worker price_per_hour: ${worker["price_per_hour"]} (${worker["price_per_hour"].runtimeType})');
+
+    final formattedHarga = _formatCurrency(worker["price_per_hour"]);
+    final rating = _parseRating(worker["rating"]);
+    final isTopRated = rating >= 4.8;
+
+    // ... rest of code sama
+
+    return FutureBuilder<bool>(
+      future: _checkIfFavorite(worker['id']),
+      builder: (context, snapshot) {
+        final isFavorite = snapshot.data ?? false;
+
+        return GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => WorkerDetailPage(worker: worker),
+              ),
+            ).then((_) {
+              // Refresh currency when coming back
+              _loadCurrency();
+            });
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 6,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Stack(
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Worker Photo
+                    ClipRRect(
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(18),
+                        topRight: Radius.circular(18),
+                      ),
+                      child: _buildWorkerPhoto(worker["photo"]),
+                    ),
+
+                    // Worker Info
+                    Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Name & Badge
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  worker["name"] ?? "Unknown",
+                                  style: const TextStyle(
+                                    fontFamily: "Poppins",
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                              ),
+                              if (isTopRated) const SizedBox(width: 4),
+                              if (isTopRated)
+                                const Icon(
+                                  Icons.verified_rounded,
+                                  color: Color(0xFF4A70A9),
+                                  size: 16,
+                                ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 2),
+
+                          // Job Title
+                          Text(
+                            worker["job_title"] ?? "",
+                            style: const TextStyle(
+                              fontFamily: "Poppins",
+                              fontSize: 12,
+                              color: Colors.black54,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+
+                          const SizedBox(height: 4),
+
+                          // Rating & Distance
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.star_rounded,
+                                color: Colors.amber,
+                                size: 14,
+                              ),
+                              const SizedBox(width: 2),
+                              Text(
+                                "$rating | ${worker["total_orders"] ?? 0}x",
+                                style: const TextStyle(
+                                  fontFamily: "Poppins",
+                                  fontSize: 11,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              const Icon(
+                                Icons.location_on,
+                                color: Color(0xFF8FABD4),
+                                size: 14,
+                              ),
+                              const SizedBox(width: 2),
+                              Expanded(
+                                child: Text(
+                                  "${worker["distance"] ?? 0} km",
+                                  style: const TextStyle(
+                                    fontFamily: "Poppins",
+                                    fontSize: 11,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 6),
+
+                          // Price
+                          Text(
+                            "$formattedHarga/jam",
+                            style: const TextStyle(
+                              fontFamily: "Poppins",
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF4A70A9),
+                              fontSize: 13,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+
+                // Favorite Button
+                Positioned(
+                  bottom: 8,
+                  right: 8,
+                  child: GestureDetector(
+                    onTap: () => _toggleFavorite(index),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        isFavorite ? Icons.favorite : Icons.favorite_border,
+                        color:
+                            isFavorite ? Colors.red : const Color(0xFF4A70A9),
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildWorkerPhoto(String? photoUrl) {
+    if (photoUrl != null && photoUrl.isNotEmpty) {
+      return Image.network(
+        'http://192.168.18.37:8000/storage/$photoUrl',
+        height: 130,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Container(
+            height: 130,
+            color: Colors.grey[200],
+            child: Center(
+              child: CircularProgressIndicator(
+                value: loadingProgress.expectedTotalBytes != null
+                    ? loadingProgress.cumulativeBytesLoaded /
+                        loadingProgress.expectedTotalBytes!
+                    : null,
+                strokeWidth: 2,
+                color: const Color(0xFF4A70A9),
+              ),
+            ),
+          );
+        },
+        errorBuilder: (_, __, ___) => Container(
+          height: 130,
+          color: Colors.grey[300],
+          child: const Icon(Icons.person, size: 50, color: Colors.grey),
+        ),
+      );
+    }
+
+    return Container(
+      height: 130,
+      color: Colors.grey[300],
+      child: const Icon(Icons.person, size: 50, color: Colors.grey),
+    );
+  }
+
+  Future<bool> _checkIfFavorite(int workerId) async {
+    final userId = await UserPreferences.getUserId();
+    if (userId == null) return false;
+    return await FavoriteDatabase.isFavorite(workerId, userId);
   }
 }

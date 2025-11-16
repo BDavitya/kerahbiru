@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
 import '../widgets/custom_snackbar.dart';
-import '../views/home_page.dart'; // nanti ganti sesuai struktur kamu
+import '../views/home_page.dart';
+import '../views/complete_profil_page.dart';
+import '../services/api_service.dart';
+import '../utils/encryption_helper.dart';
+import '../utils/session_manager.dart';
+import '../views/shake_verification_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginCard extends StatefulWidget {
   final VoidCallback onSwitch;
@@ -14,8 +20,9 @@ class _LoginCardState extends State<LoginCard> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   bool showPassword = false;
+  bool isLoading = false;
 
-  void _validateAndLogin() {
+  Future<void> _validateAndLogin() async {
     if (emailController.text.isEmpty || passwordController.text.isEmpty) {
       CustomSnackbar.show(
         context,
@@ -34,11 +41,76 @@ class _LoginCardState extends State<LoginCard> {
       return;
     }
 
-    // Kalau semua valid:
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const HomePage()),
-    );
+    setState(() => isLoading = true);
+
+    try {
+      final encryptedPassword = EncryptionHelper.encryptPassword(
+        passwordController.text,
+      );
+
+      final response = await ApiService.login(
+        email: emailController.text,
+        password: encryptedPassword,
+      );
+
+      if (response['success'] == true) {
+        await SessionManager.saveLoginTime();
+        await SessionManager.saveUser(response['user']);
+
+        if (mounted) {
+          CustomSnackbar.show(
+            context,
+            message: 'Login berhasil!',
+            backgroundColor: Colors.green,
+          );
+
+          final user = response['user'];
+          final isComplete = user['phone'] != null && user['address'] != null;
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  isComplete ? const HomePage() : const CompleteProfilePage(),
+            ),
+          );
+        }
+      } else if (response['needs_shake_verification'] == true) {
+        // User belum verified, redirect ke shake verification
+        if (mounted) {
+          // Simpan token dan user ID dulu
+          if (response['user'] != null && response['user']['id'] != null) {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt('user_id', response['user']['id']);
+            await prefs.setString('auth_token', response['token']);
+          }
+
+          CustomSnackbar.show(
+            context,
+            message:
+                'Akun belum diverifikasi. Silakan selesaikan verifikasi keamanan.',
+            backgroundColor: Colors.orange,
+          );
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const ShakeVerificationPage()),
+          );
+        }
+      } else {
+        throw response['message'] ?? 'Login gagal';
+      }
+    } catch (e) {
+      if (mounted) {
+        CustomSnackbar.show(
+          context,
+          message: 'Error: $e',
+          backgroundColor: Colors.red,
+        );
+      }
+    } finally {
+      setState(() => isLoading = false);
+    }
   }
 
   @override
@@ -154,15 +226,24 @@ class _LoginCardState extends State<LoginCard> {
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              onPressed: _validateAndLogin,
-              child: const Text(
-                "Masuk",
-                style: TextStyle(
-                  fontFamily: 'Poppins',
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
+              onPressed: isLoading ? null : _validateAndLogin,
+              child: isLoading
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(Colors.white),
+                      ),
+                    )
+                  : const Text(
+                      "Masuk",
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
             ),
           ),
           const SizedBox(height: 18),

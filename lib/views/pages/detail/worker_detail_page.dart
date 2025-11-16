@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // untuk format harga
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../widgets/custom_snackbar.dart';
+import '../../../utils/favorite_database.dart';
 import '../order_page.dart';
+import '../../../utils/timezone_helper.dart';
+import '../../../utils/user_preferences.dart';
 
 class WorkerDetailPage extends StatefulWidget {
   final Map<String, dynamic> worker;
@@ -15,6 +19,46 @@ class WorkerDetailPage extends StatefulWidget {
 class _WorkerDetailPageState extends State<WorkerDetailPage> {
   bool isFavorite = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _checkFavorite();
+    _loadTimezone();
+  }
+
+  Future<void> _checkFavorite() async {
+    final result = await FavoriteDatabase.isFavorite(widget.worker['id']);
+    setState(() => isFavorite = result);
+  }
+
+  Future<void> _loadTimezone() async {
+    final tz = await UserPreferences.getTimezone();
+    setState(() => currentTimezone = tz);
+  }
+
+  Future<void> _toggleFavorite() async {
+    if (isFavorite) {
+      await FavoriteDatabase.removeFavorite(widget.worker['id']);
+      if (mounted) {
+        CustomSnackbar.show(
+          context,
+          message: 'Dihapus dari favorit.',
+          backgroundColor: Colors.red,
+        );
+      }
+    } else {
+      await FavoriteDatabase.addFavorite(widget.worker);
+      if (mounted) {
+        CustomSnackbar.show(
+          context,
+          message: 'Ditambahkan ke favorit!',
+          backgroundColor: Colors.green,
+        );
+      }
+    }
+    setState(() => isFavorite = !isFavorite);
+  }
+
   String formatRupiah(dynamic harga) {
     final number = (harga is num)
         ? harga.toInt()
@@ -24,6 +68,40 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
       symbol: 'Rp ',
       decimalDigits: 0,
     ).format(number);
+  }
+
+  Future<void> _openWhatsApp() async {
+    final worker = widget.worker;
+    final phone = worker['whatsapp'] ?? worker['phone'] ?? '';
+    final name = worker['name'] ?? '';
+
+    final url = Uri.parse(
+        'https://wa.me/$phone?text=Halo, saya tertarik dengan jasa $name');
+
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        CustomSnackbar.show(
+          context,
+          message: 'Tidak dapat membuka WhatsApp',
+          backgroundColor: Colors.red,
+        );
+      }
+    }
+  }
+
+  Widget _timeChip(String text) {
+    final convertedTime = TimezoneHelper.convertTime(text, currentTimezone);
+
+    return Chip(
+      label: Text(
+        convertedTime,
+        style: const TextStyle(fontFamily: "Poppins", fontSize: 12),
+      ),
+      backgroundColor: Colors.white,
+      side: const BorderSide(color: Color(0xFF4A70A9), width: 0.5),
+    );
   }
 
   @override
@@ -36,7 +114,6 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
         children: [
           CustomScrollView(
             slivers: [
-              // AppBar dengan tombol kembali
               SliverAppBar(
                 pinned: true,
                 backgroundColor: Colors.white,
@@ -64,36 +141,39 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                   ),
                 ),
                 flexibleSpace: FlexibleSpaceBar(
-                  background: ClipRRect(
-                    child: Image.asset(
-                      worker["foto"].toString(),
-                      fit: BoxFit.cover,
-                    ),
-                  ),
+                  background: worker["photo"] != null
+                      ? ClipRRect(
+                          child: Image.network(
+                            'http://192.168.1.5:8000/storage/${worker["photo"]}',
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              color: Colors.grey[300],
+                              child: const Icon(Icons.person, size: 60),
+                            ),
+                          ),
+                        )
+                      : Container(
+                          color: Colors.grey[300],
+                          child: const Icon(Icons.person, size: 60),
+                        ),
                 ),
               ),
-
-              // Konten
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 16,
-                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Nama, pekerjaan, harga, dan jarak
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Kolom kiri (nama dan pekerjaan)
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  worker["nama"]?.toString() ?? "Pekerja",
+                                  worker["name"]?.toString() ?? "Pekerja",
                                   style: const TextStyle(
                                     fontFamily: "Poppins",
                                     fontWeight: FontWeight.w600,
@@ -102,7 +182,7 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  worker["pekerjaan"]?.toString() ?? "-",
+                                  worker["job_title"]?.toString() ?? "-",
                                   style: const TextStyle(
                                     fontFamily: "Poppins",
                                     fontSize: 14,
@@ -112,13 +192,11 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                               ],
                             ),
                           ),
-
-                          // Kolom kanan (harga dan jarak)
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               Text(
-                                formatRupiah(worker["harga"]),
+                                formatRupiah(worker["price_per_hour"]),
                                 style: const TextStyle(
                                   fontFamily: "Poppins",
                                   fontWeight: FontWeight.w700,
@@ -137,7 +215,7 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                                   ),
                                   const SizedBox(width: 4),
                                   Text(
-                                    worker["jarak"]?.toString() ?? "0 km",
+                                    "${worker["distance"]?.toString() ?? '0'} km",
                                     style: const TextStyle(
                                       fontFamily: "Poppins",
                                       fontSize: 13,
@@ -150,13 +228,10 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 16),
                       const Divider(),
-
-                      // Deskripsi
                       Text(
-                        worker["deskripsi"]?.toString() ??
+                        worker["description"]?.toString() ??
                             "Pekerja profesional dengan pengalaman luas dan hasil kerja berkualitas tinggi. Siap membantu Anda dengan layanan terbaik!",
                         style: const TextStyle(
                           fontFamily: "Poppins",
@@ -167,8 +242,6 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                       ),
                       const SizedBox(height: 16),
                       const Divider(),
-
-                      // Jadwal
                       const Text(
                         "Waktu Tersedia (WIB)",
                         style: TextStyle(
@@ -189,8 +262,6 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                       ),
                       const SizedBox(height: 16),
                       const Divider(),
-
-                      // Rating & Ulasan
                       const Text(
                         "Ulasan Pelanggan",
                         style: TextStyle(
@@ -217,7 +288,7 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            "(${worker["order"]?.toString() ?? '0'} order)",
+                            "(${worker["total_orders"]?.toString() ?? '0'} order)",
                             style: const TextStyle(
                               fontFamily: "Poppins",
                               fontSize: 13,
@@ -227,14 +298,15 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                         ],
                       ),
                       const SizedBox(height: 10),
-
                       _reviewCard(
                         "Siti Aisyah",
-                        "(4/5) Kerjanya cepat dan hasilnya rapi banget, recommended!",
+                        "Kerjanya cepat dan hasilnya rapi banget, recommended!",
+                        4.5,
                       ),
                       _reviewCard(
                         "Dodi",
-                        "(3/5) Pelayanan bagus dan tepat waktu. Pasti order lagi!",
+                        "Pelayanan bagus dan tepat waktu. Pasti order lagi!",
+                        4.0,
                       ),
                       const SizedBox(height: 100),
                     ],
@@ -243,8 +315,6 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
               ),
             ],
           ),
-
-          // Sticky Bottom Buttons
           Positioned(
             bottom: 0,
             left: 0,
@@ -269,27 +339,13 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          isFavorite = !isFavorite;
-                        });
-                        CustomSnackbar.show(
-                          context,
-                          message: isFavorite
-                              ? 'Ditambahkan ke favorit!'
-                              : 'Dihapus dari favorit.',
-                          backgroundColor: isFavorite
-                              ? Colors.green
-                              : Colors.red,
-                        );
-                      },
+                      onPressed: _toggleFavorite,
                       icon: Icon(
                         isFavorite
                             ? Icons.favorite
                             : Icons.favorite_border_rounded,
-                        color: isFavorite
-                            ? Colors.red
-                            : const Color(0xFF4A70A9),
+                        color:
+                            isFavorite ? Colors.red : const Color(0xFF4A70A9),
                       ),
                       label: const Text("Favorit"),
                       style: ElevatedButton.styleFrom(
@@ -314,21 +370,10 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => OrderPage(
-                              workerName: "Siti Rahmawati",
-                              jobTitle: "Asisten Rumah Tangga",
-                              pricePerKm: 20000,
-                              distance: 4.2,
-                              availableSessions: {
-                                "Senin": ["08.00–10.00", "13.00–15.00"],
-                                "Selasa": ["09.00–11.00", "14.00–16.00"],
-                                "Kamis": ["10.00–12.00", "15.00–17.00"],
-                              },
-                            ),
+                            builder: (context) => OrderPage(worker: worker),
                           ),
                         );
                       },
-
                       icon: const Icon(Icons.shopping_bag_rounded),
                       label: const Text("Pesan Sekarang"),
                       style: ElevatedButton.styleFrom(
@@ -353,47 +398,61 @@ class _WorkerDetailPageState extends State<WorkerDetailPage> {
       ),
     );
   }
+
+  Widget _timeChip(String text) => Chip(
+        label: Text(
+          text,
+          style: const TextStyle(fontFamily: "Poppins", fontSize: 12),
+        ),
+        backgroundColor: Colors.white,
+        side: const BorderSide(color: Color(0xFF4A70A9), width: 0.5),
+      );
+
+  Widget _reviewCard(String name, String comment, double rating) => Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontFamily: "Poppins",
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+                const Spacer(),
+                Row(
+                  children: [
+                    const Icon(Icons.star, color: Colors.amber, size: 14),
+                    const SizedBox(width: 2),
+                    Text(
+                      rating.toString(),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              comment,
+              style: const TextStyle(
+                fontFamily: "Poppins",
+                fontSize: 12,
+                color: Colors.black87,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      );
 }
-
-// 🔹 Widget Tambahan
-Widget _timeChip(String text) => Chip(
-  label: Text(
-    text,
-    style: const TextStyle(fontFamily: "Poppins", fontSize: 12),
-  ),
-  backgroundColor: Colors.white,
-  side: const BorderSide(color: Color(0xFF4A70A9), width: 0.5),
-);
-
-Widget _reviewCard(String name, String comment) => Container(
-  width: double.infinity,
-  margin: const EdgeInsets.only(bottom: 8),
-  padding: const EdgeInsets.all(10),
-  decoration: BoxDecoration(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(12),
-  ),
-  child: Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        name,
-        style: const TextStyle(
-          fontFamily: "Poppins",
-          fontWeight: FontWeight.w600,
-          fontSize: 13,
-        ),
-      ),
-      const SizedBox(height: 2),
-      Text(
-        comment,
-        style: const TextStyle(
-          fontFamily: "Poppins",
-          fontSize: 12,
-          color: Colors.black87,
-          height: 1.4,
-        ),
-      ),
-    ],
-  ),
-);

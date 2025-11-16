@@ -2,23 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import '../../widgets/custom_snackbar.dart';
+import '../../services/api_service.dart';
 import '../home_page.dart';
+import '../../utils/currency_helper.dart';
+import '../../utils/user_preferences.dart';
+import '../../utils/timezone_helper.dart';
+
+String currentCurrency = 'IDR';
+String currentTimezone = 'Asia/Jakarta';
 
 class OrderPage extends StatefulWidget {
-  final String workerName;
-  final String jobTitle;
-  final double pricePerKm;
-  final double distance;
-  final Map<String, List<String>>
-  availableSessions; // contoh: {"Senin": ["08.00-10.00", "13.00-15.00"]}
+  final Map<String, dynamic> worker;
 
   const OrderPage({
     super.key,
-    required this.workerName,
-    required this.jobTitle,
-    required this.pricePerKm,
-    required this.distance,
-    required this.availableSessions,
+    required this.worker,
   });
 
   @override
@@ -28,23 +26,111 @@ class OrderPage extends StatefulWidget {
 class _OrderPageState extends State<OrderPage> {
   DateTime? selectedDate;
   String? selectedSession;
+  bool isSubmitting = false;
 
-  List<String> getAvailableSessionsForSelectedDay() {
-    if (selectedDate == null) return [];
-    final hari = DateFormat('EEEE', 'id_ID').format(selectedDate!);
-    return widget.availableSessions[hari] ?? [];
-  }
+  List<String> availableTimeslots = [
+    "08:00-10:00",
+    "10:00-12:00",
+    "13:00-15:00",
+    "15:00-17:00",
+  ];
 
   @override
   void initState() {
     super.initState();
     initializeDateFormatting('id_ID', null);
+    _loadCurrency();
+    _loadTimezone();
+  }
+
+  Future<void> _loadTimezone() async {
+    final timezone = await UserPreferences.getTimezone();
+    setState(() => currentTimezone = timezone);
+  }
+
+  List<String> get convertedTimeslots {
+    return availableTimeslots.map((slot) {
+      return TimezoneHelper.convertTime(slot, currentTimezone);
+    }).toList();
+  }
+
+  Future<void> _loadCurrency() async {
+    final currency = await UserPreferences.getCurrency();
+    setState(() => currentCurrency = currency);
+  }
+
+  String formatRupiah(dynamic harga) {
+    return CurrencyHelper.convertAndFormat(harga, currentCurrency);
+  }
+
+  Future<void> _submitOrder() async {
+    if (selectedDate == null) {
+      CustomSnackbar.show(
+        context,
+        message: "Pilih tanggal terlebih dahulu",
+        backgroundColor: Colors.red,
+      );
+      return;
+    }
+
+    if (selectedSession == null) {
+      CustomSnackbar.show(
+        context,
+        message: "Pilih sesi waktu terlebih dahulu",
+        backgroundColor: Colors.red,
+      );
+      return;
+    }
+
+    setState(() => isSubmitting = true);
+
+    try {
+      final response = await ApiService.createOrder(
+        workerId: widget.worker['id'],
+        orderDate: DateFormat('yyyy-MM-dd').format(selectedDate!),
+        timeSlot: selectedSession!,
+      );
+
+      if (response['success'] == true) {
+        if (mounted) {
+          CustomSnackbar.show(
+            context,
+            message: "Pesanan berhasil dibuat!",
+            backgroundColor: Colors.green,
+          );
+
+          Future.delayed(const Duration(seconds: 1), () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const HomePage(initialIndex: 2),
+              ),
+              (route) => false,
+            );
+          });
+        }
+      } else {
+        throw response['message'] ?? 'Gagal membuat pesanan';
+      }
+    } catch (e) {
+      if (mounted) {
+        CustomSnackbar.show(
+          context,
+          message: 'Error: $e',
+          backgroundColor: Colors.red,
+        );
+      }
+    } finally {
+      setState(() => isSubmitting = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    double total = widget.pricePerKm * 2;
-    final sesiList = getAvailableSessionsForSelectedDay();
+    final worker = widget.worker;
+    double pricePerHour =
+        double.tryParse(worker['price_per_hour'].toString()) ?? 0;
+    double total = pricePerHour * 2; // Asumsi 2 jam
 
     return Scaffold(
       appBar: AppBar(
@@ -58,45 +144,33 @@ class _OrderPageState extends State<OrderPage> {
           ),
         ),
         centerTitle: true,
-        leadingWidth: 64,
-        leading: Container(
-          margin: const EdgeInsets.all(10),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black26,
-                blurRadius: 4,
-                offset: Offset(0, 2),
-              ),
-            ],
+        leading: IconButton(
+          icon: const Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Color(0xFF4A70A9),
           ),
-          child: IconButton(
-            icon: const Icon(
-              Icons.arrow_back_ios_new_rounded,
-              color: Color(0xFF4A70A9),
-              size: 20,
-            ),
-            onPressed: () => Navigator.pop(context),
-          ),
+          onPressed: () => Navigator.pop(context),
         ),
       ),
-
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
             Text(
-              widget.workerName,
+              worker['name'] ?? 'Worker',
               style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
-            Text(widget.jobTitle, style: const TextStyle(color: Colors.grey)),
+            Text(
+              worker['job_title'] ?? '',
+              style: const TextStyle(color: Colors.grey),
+            ),
             const Divider(height: 32),
-
-            // Pilih tanggal
+            // Tampilkan jam sesuai timezone
+            Text(
+              'Jam sekarang: ${TimezoneHelper.getCurrentTimeInTimezone(currentTimezone)}',
+              style: const TextStyle(fontSize: 12),
+            ),
             Container(
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
@@ -113,10 +187,8 @@ class _OrderPageState extends State<OrderPage> {
                   child: Text(
                     selectedDate == null
                         ? "Belum dipilih"
-                        : DateFormat(
-                            'EEEE, dd MMM yyyy',
-                            'id_ID',
-                          ).format(selectedDate!),
+                        : DateFormat('EEEE, dd MMM yyyy', 'id_ID')
+                            .format(selectedDate!),
                   ),
                 ),
                 trailing: const Icon(Icons.calendar_today),
@@ -130,13 +202,12 @@ class _OrderPageState extends State<OrderPage> {
                   if (pickedDate != null) {
                     setState(() {
                       selectedDate = pickedDate;
-                      selectedSession = null; // reset sesi saat tanggal berubah
+                      selectedSession = null;
                     });
                   }
                 },
               ),
             ),
-
             Container(
               margin: const EdgeInsets.only(top: 8),
               decoration: BoxDecoration(
@@ -148,50 +219,37 @@ class _OrderPageState extends State<OrderPage> {
                   "Pilih Sesi Tersedia",
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
-                subtitle: sesiList.isEmpty
-                    ? const Padding(
-                        padding: EdgeInsets.only(top: 4),
-                        child: Text(
-                          "Tidak ada sesi tersedia untuk tanggal ini",
-                          style: TextStyle(color: Colors.grey),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Wrap(
+                    spacing: 8,
+                    children: convertedTimeslots.map((sesi) {
+                      return ChoiceChip(
+                        label: Text(sesi),
+                        selected: selectedSession == sesi,
+                        selectedColor: const Color(0xFF4A70A9),
+                        labelStyle: TextStyle(
+                          color: selectedSession == sesi
+                              ? Colors.white
+                              : Colors.black,
                         ),
-                      )
-                    : Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Wrap(
-                          spacing: 8,
-                          children: sesiList
-                              .map(
-                                (sesi) => ChoiceChip(
-                                  label: Text(sesi),
-                                  selected: selectedSession == sesi,
-                                  selectedColor: Colors.blueGrey,
-                                  labelStyle: TextStyle(
-                                    color: selectedSession == sesi
-                                        ? Colors.white
-                                        : Colors.black,
-                                  ),
-                                  onSelected: (_) {
-                                    setState(() {
-                                      selectedSession = sesi;
-                                    });
-                                  },
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      ),
+                        onSelected: (_) {
+                          setState(() {
+                            selectedSession = sesi;
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ),
               ),
             ),
-
             const Spacer(),
-
-            // Info harga
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text("Jarak Pekerja"),
-                Text("${widget.distance.toStringAsFixed(1)} km"),
+                Text("${worker['distance']?.toString() ?? '0'} km"),
               ],
             ),
             const SizedBox(height: 8),
@@ -203,7 +261,7 @@ class _OrderPageState extends State<OrderPage> {
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 Text(
-                  "Rp ${total.toStringAsFixed(0)}",
+                  formatRupiah(total),
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
               ],
@@ -211,54 +269,32 @@ class _OrderPageState extends State<OrderPage> {
           ],
         ),
       ),
-
-      // Tombol bawah
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              backgroundColor: const Color(0xFF4A70A9),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            height: 50,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4A70A9),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
+              icon: isSubmitting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.check_circle),
+              label: Text(isSubmitting ? "Memproses..." : "Konfirmasi Pesanan"),
+              onPressed: isSubmitting ? null : _submitOrder,
             ),
-            icon: const Icon(Icons.check_circle),
-            label: const Text("Konfirmasi Pesanan"),
-            onPressed: () {
-              if (selectedDate == null) {
-                CustomSnackbar.show(
-                  context,
-                  message: "Pilih tanggal terlebih dahulu",
-                  backgroundColor: Colors.red,
-                );
-              } else if (selectedSession == null) {
-                CustomSnackbar.show(
-                  context,
-                  message: "Pilih sesi waktu terlebih dahulu",
-                  backgroundColor: Colors.red,
-                );
-              } else {
-                CustomSnackbar.show(
-                  context,
-                  message:
-                      "Pesanan dikonfirmasi untuk ${DateFormat('EEEE, dd MMM yyyy', 'id_ID').format(selectedDate!)} sesi $selectedSession",
-                  backgroundColor: Colors.green,
-                );
-
-                Future.delayed(const Duration(seconds: 1), () {
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const HomePage(initialIndex: 2),
-                    ),
-                    (route) => false,
-                  );
-                });
-              }
-            },
           ),
         ),
       ),
