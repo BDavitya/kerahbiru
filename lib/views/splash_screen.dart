@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'auth_page.dart';
-import 'home_page.dart';
-import '../utils/session_manager.dart';
+import 'start_page.dart';
+import '../utils/session/session_manager.dart';
 import 'complete_profil_page.dart';
 
 class SplashScreen extends StatefulWidget {

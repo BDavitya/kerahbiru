@@ -3,10 +3,10 @@ import 'dart:io';
 import 'package:intl/intl.dart';
 import '../../../services/api_service.dart';
 import '../../../widgets/custom_snackbar.dart';
-import '../../../utils/timezone_helper.dart';
+import '../../../utils/helpers/timezone_helper.dart';
 import '../../../utils/user_preferences.dart';
-import '../foto_before_page.dart';
-import '../foto_after_page.dart';
+import '../before_page.dart';
+import '../after_page.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
 
 class OrderDetailPage extends StatefulWidget {

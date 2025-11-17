@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import '../widgets/custom_snackbar.dart';
-import '../views/home_page.dart';
+import '../views/start_page.dart';
 import '../views/complete_profil_page.dart';
 import '../services/api_service.dart';
-import '../utils/encryption_helper.dart';
-import '../utils/session_manager.dart';
+import '../utils/helpers/encryption_helper.dart';
+import '../utils/session/session_manager.dart';
 import '../views/shake_verification_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
